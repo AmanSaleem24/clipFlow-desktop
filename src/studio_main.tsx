@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import App from "./App.tsx";
+import App from "./studio_app";
 import "./index.css";
 import { ClerkProvider } from "@clerk/clerk-react";
 
