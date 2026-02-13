@@ -22,6 +22,7 @@ export const StartRecording = (onSources: {
 export const onStopRecording = () => mediaRecorder?.stop();
 
 export const stopRecording = () => {
+    // finalize current recording and notify backend that no more chunks should arrive
     hidePluginWindow(false)
     socket.emit('process-video', {
         filename: videoTransferFileName,
@@ -94,7 +95,8 @@ export const selectSources = async (
     });
 
     mediaRecorder.ondataavailable = onDataAvailable;
-    mediaRecorder.onstart = stopRecording;
+    // notify backend only after the recorder actually stops
+    mediaRecorder.onstop = stopRecording;
     return true;
   } catch (error) {
     console.error("Failed to initialize screen capture source", error);

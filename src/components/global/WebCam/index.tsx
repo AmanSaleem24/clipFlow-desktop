@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react'
+import  { useEffect, useRef } from 'react'
 
 const WebCam = () => {
   const camElement = useRef<HTMLVideoElement | null>(null)

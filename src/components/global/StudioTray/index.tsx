@@ -1,5 +1,5 @@
 import { onStopRecording, selectSources, StartRecording } from "@/lib/recorder";
-import { cn, resizeWindow, videoRecordingTime } from "@/lib/utils";
+import { cn, videoRecordingTime } from "@/lib/utils";
 import { Cast, Pause, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
