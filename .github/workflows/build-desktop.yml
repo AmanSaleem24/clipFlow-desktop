@@ -60,7 +60,13 @@ jobs:
         with:
           name: clipflow-${{ matrix.name }}-artifacts
           path: |
-            release/**/*
+            release/**/*.exe
+            release/**/*.dmg
+            release/**/*.deb
+            release/**/*.AppImage
+            release/**/latest*.yml
+            release/**/*.blockmap
+            release/**/builder-effective-config.yaml
           if-no-files-found: error
 
       - name: Publish files to GitHub Release
@@ -68,4 +74,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            release/**/*
+            release/**/*.exe
+            release/**/*.dmg
+            release/**/*.deb
+            release/**/*.AppImage
+            release/**/latest*.yml
+            release/**/*.blockmap
+            release/**/builder-effective-config.yaml
