@@ -1,6 +1,8 @@
 import { app, BrowserWindow, desktopCapturer, ipcMain, systemPreferences } from 'electron'
 import type { BrowserWindowConstructorOptions, SourcesOptions } from 'electron'
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { fileURLToPath } from 'node:url'
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -23,6 +25,9 @@ let studio: BrowserWindow | null = null
 let floatingWebCam: BrowserWindow | null = null
 let windowsCreated = false
 
+let rendererHttpServer: ReturnType<typeof createServer> | null = null
+let rendererHttpOrigin: string | null = null
+
 const MIN_WINDOW_WIDTH = 320
 const MIN_WINDOW_HEIGHT = 160
 const MAX_WINDOW_WIDTH = 640
@@ -37,15 +42,133 @@ const clampSize = (value: number, min: number, max: number) =>
 const toRendererUrl = (entryFile: string) =>
   VITE_DEV_SERVER_URL ? new URL(entryFile, VITE_DEV_SERVER_URL).toString() : null
 
-const loadRendererEntry = (browserWindow: BrowserWindow, entryFile: string) => {
+const wait = (ms: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms)
+  })
+
+const getMimeType = (filePath: string) => {
+  const extension = path.extname(filePath).toLowerCase()
+  const mimeByExtension: Record<string, string> = {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.mjs': 'text/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+    '.svg': 'image/svg+xml',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.ico': 'image/x-icon',
+    '.woff': 'font/woff',
+    '.woff2': 'font/woff2',
+    '.ttf': 'font/ttf',
+    '.map': 'application/json; charset=utf-8',
+  }
+
+  return mimeByExtension[extension] || 'application/octet-stream'
+}
+
+const getSafeRequestPath = (pathname: string) => {
+  const decoded = decodeURIComponent(pathname)
+  const cleanPath = decoded === '/' ? '/index.html' : decoded
+  const normalized = path.normalize(cleanPath).replace(/^([.]{2}[/\\])+/, '')
+  return normalized.startsWith('/') ? normalized.slice(1) : normalized
+}
+
+const serveRendererAsset = async (req: IncomingMessage, res: ServerResponse) => {
+  try {
+    const requestUrl = new URL(req.url || '/', 'http://127.0.0.1')
+    const safePath = getSafeRequestPath(requestUrl.pathname)
+    const filePath = path.join(RENDERER_DIST, safePath)
+
+    // Prevent path traversal beyond the renderer dist directory.
+    if (!filePath.startsWith(RENDERER_DIST)) {
+      res.writeHead(403)
+      res.end('Forbidden')
+      return
+    }
+
+    const file = await readFile(filePath)
+    const contentType = getMimeType(filePath)
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'Cache-Control': 'no-cache',
+    })
+    res.end(file)
+  } catch {
+    res.writeHead(404)
+    res.end('Not found')
+  }
+}
+
+const ensureRendererHttpOrigin = async () => {
+  if (VITE_DEV_SERVER_URL) return null
+  if (rendererHttpOrigin) return rendererHttpOrigin
+
+  await new Promise<void>((resolve, reject) => {
+    rendererHttpServer = createServer((req, res) => {
+      void serveRendererAsset(req, res)
+    })
+
+    rendererHttpServer.once('error', reject)
+    rendererHttpServer.listen(0, '127.0.0.1', () => {
+      const address = rendererHttpServer?.address()
+      if (!address || typeof address === 'string') {
+        reject(new Error('Unable to resolve renderer HTTP server address'))
+        return
+      }
+
+      rendererHttpOrigin = `http://127.0.0.1:${address.port}`
+      console.log('🌐 [renderer] local server started', { origin: rendererHttpOrigin })
+      resolve()
+    })
+  })
+
+  return rendererHttpOrigin
+}
+
+const stopRendererHttpServer = async () => {
+  if (!rendererHttpServer) return
+
+  await new Promise<void>((resolve) => {
+    rendererHttpServer?.close(() => resolve())
+  })
+
+  rendererHttpServer = null
+  rendererHttpOrigin = null
+}
+
+const loadRendererEntry = async (browserWindow: BrowserWindow, entryFile: string) => {
   if (VITE_DEV_SERVER_URL) {
     const url = toRendererUrl(entryFile)
     if (!url) throw new Error(`Unable to resolve dev URL for ${entryFile}`)
-    browserWindow.loadURL(url)
+
+    const maxAttempts = 20
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        await browserWindow.loadURL(url)
+        return
+      } catch (error) {
+        if (attempt === maxAttempts) {
+          throw error
+        }
+
+        console.warn(`⏳ [renderer] retrying load (${attempt}/${maxAttempts})`, { entryFile, url })
+        await wait(250)
+      }
+    }
+
     return
   }
 
-  browserWindow.loadFile(path.join(RENDERER_DIST, entryFile))
+  const rendererOrigin = await ensureRendererHttpOrigin()
+  if (!rendererOrigin) {
+    throw new Error(`Unable to resolve renderer origin for ${entryFile}`)
+  }
+
+  await browserWindow.loadURL(`${rendererOrigin}/${entryFile}`)
 }
 
 const attachWindowLifecycle = (name: 'win' | 'studio' | 'floatingWebCam', browserWindow: BrowserWindow) => {
@@ -70,7 +193,7 @@ const attachWindowLifecycle = (name: 'win' | 'studio' | 'floatingWebCam', browse
   })
 }
 
-const createWindow = () => {
+const createWindow = async () => {
   if (win || studio || floatingWebCam) return
 
   const baseWindowOptions: BrowserWindowConstructorOptions = {
@@ -142,9 +265,18 @@ const createWindow = () => {
     floatingWebCam?.webContents.send('main-process-message', new Date().toLocaleString())
   })
 
-  loadRendererEntry(win, 'index.html')
-  loadRendererEntry(studio, 'studio.html')
-  loadRendererEntry(floatingWebCam, 'webcam.html')
+  const results = await Promise.allSettled([
+    loadRendererEntry(win, 'index.html'),
+    loadRendererEntry(studio, 'studio.html'),
+    loadRendererEntry(floatingWebCam, 'webcam.html'),
+  ])
+
+  results.forEach((result, index) => {
+    if (result.status === 'fulfilled') return
+
+    const windowName = index === 0 ? 'win' : index === 1 ? 'studio' : 'floatingWebCam'
+    console.error(`❌ [${windowName}] renderer failed to load`, result.reason)
+  })
 
   windowsCreated = true
 }
@@ -196,6 +328,68 @@ const registerMainIpc = () => {
     return sources
   })
 
+  ipcMain.handle(
+    'http-request',
+    async (
+      _event,
+      payload: {
+        url: string
+        method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+        data?: unknown
+        headers?: Record<string, string>
+      },
+    ) => {
+      const method = payload.method || 'GET'
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 15000)
+
+      try {
+        const response = await fetch(payload.url, {
+          method,
+          headers: {
+            'Content-Type': 'application/json',
+            ...(payload.headers || {}),
+          },
+          body: method === 'GET' || payload.data === undefined ? undefined : JSON.stringify(payload.data),
+          signal: controller.signal,
+        })
+
+        const text = await response.text()
+        let data: unknown = null
+
+        if (text) {
+          try {
+            data = JSON.parse(text)
+          } catch {
+            data = text
+          }
+        }
+
+        if (!response.ok) {
+          return {
+            ok: false,
+            status: response.status,
+            error: typeof data === 'string' ? data : `Request failed with status ${response.status}`,
+          }
+        }
+
+        return {
+          ok: true,
+          status: response.status,
+          data,
+        }
+      } catch (error) {
+        return {
+          ok: false,
+          status: 0,
+          error: error instanceof Error ? error.message : 'Request failed',
+        }
+      } finally {
+        clearTimeout(timeoutId)
+      }
+    },
+  )
+
   ipcMain.on('media-sources', (_event, payload) => {
     console.log('📤 [ipcMain] media-sources', payload)
     studio?.webContents.send('profile-received', payload)
@@ -220,10 +414,11 @@ const registerMainIpc = () => {
   })
 }
 
-app.on('window-all-closed', () => {
+app.on('window-all-closed', async () => {
   console.log('🚪 [app] window-all-closed', { isMac })
   if (!isMac) {
     console.log('🛑 [app] quitting from window-all-closed')
+    await stopRendererHttpServer()
     app.quit()
     win = null
     studio = null
@@ -232,10 +427,18 @@ app.on('window-all-closed', () => {
   }
 })
 
+app.on('before-quit', async () => {
+  await stopRendererHttpServer()
+})
+
 app.on('activate', () => {
   const openWindowCount = BrowserWindow.getAllWindows().length
   console.log('🔁 [app] activate', { openWindowCount })
-  if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  if (BrowserWindow.getAllWindows().length === 0) {
+    void createWindow().catch((error) => {
+      console.error('❌ [app] failed to create window on activate', error)
+    })
+  }
 })
 
 const ensureScreenPermission = async () => {
@@ -253,6 +456,8 @@ app.whenReady().then(async () => {
   if (!windowsCreated) {
     console.log('🧩 [app] initializing IPC + windows')
     registerMainIpc()
-    createWindow()
+    await createWindow().catch((error) => {
+      console.error('❌ [app] failed to create initial windows', error)
+    })
   }
 })

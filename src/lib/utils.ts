@@ -10,17 +10,71 @@ export function cn(...inputs: ClassValue[]) {
 export const onCloseApp = () => window.ipcRenderer.send('closeApp')
 
 const httpsClient = axios.create({
-  baseURL: import.meta.env.VITE_HOST_URL
+  baseURL: import.meta.env.VITE_HOST_URL,
+  timeout: 15000,
 })
 
-export const fetchUserProfile = async (clerkId: string) => {
-  const response = await httpsClient.get(`/auth/${clerkId}`, {
-    headers:{
-      'Content-Type': 'application/json'
+const requestApi = async <T>(
+  method: "GET" | "POST",
+  path: string,
+  data?: unknown,
+) => {
+  if (import.meta.env.PROD) {
+    const result = (await window.ipcRenderer.invoke("http-request", {
+      url: `${import.meta.env.VITE_HOST_URL}${path}`,
+      method,
+      data,
+      headers: {
+        "Content-Type": "application/json",
+      },
+    })) as { ok: boolean; status: number; data?: T; error?: string }
+
+    if (!result.ok) {
+      throw new Error(result.error || `Request failed (${result.status})`)
     }
+
+    return result.data as T
+  }
+
+  const response = await httpsClient.request<T>({
+    method,
+    url: path,
+    data,
+    headers: {
+      "Content-Type": "application/json",
+    },
   })
-  console.log(response.data)
+
   return response.data
+}
+
+export const fetchUserProfile = async (clerkId: string) => {
+  const data = await requestApi<{
+    status: number
+    user: {
+      subscription: {
+        plan: "PRO" | "FREE"
+      } | null
+      studio: {
+        id: string
+        screen: string | null
+        mic: string | null
+        preset: "HD" | "SD"
+        camera: string | null
+        pundit: string | null
+        userId: string | null
+      } | null
+      id: string
+      email: string
+      firstname: string | null
+      lastname: string | null
+      createdAt: Date
+      clerkid: string
+    } | null
+  }>(`GET`, `/auth/${clerkId}`)
+
+  console.log(data)
+  return data
 }
 
 export const getMediaResources = async () => {
@@ -54,21 +108,18 @@ export const updateStudioSettings = async (
   audio: string,
   preset: 'HD' | 'SD'
 ) => {
-  const response = await httpsClient.post(
+  return requestApi<{
+    status: number
+    message: string
+  }>(
+    "POST",
     `/studio/${id}`,
     {
       screen,
       audio,
       preset,
-    },
-    {
-      headers: {
-        'Content-Type': 'application/json',
-      },
     }
   )
-
-  return response.data
 }
 
 

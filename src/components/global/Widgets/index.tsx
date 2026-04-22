@@ -32,16 +32,46 @@ const Widget = () => {
         })
       | null;
   } | null>(null);
+  const [isProfileLoading, setIsProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
 
   const { state, fetchMediaResources } = useMediaSources();
 
   const { user } = useUser();
 
   useEffect(() => {
-    if (user && user.id) {
-      fetchUserProfile(user.id).then((p) => setProfile(p));
+    let isCancelled = false;
+
+    if (!user?.id) {
+      setProfile(null);
+      setProfileError(null);
+      setIsProfileLoading(false);
+      return;
     }
-  }, [user]);
+
+    setIsProfileLoading(true);
+    setProfileError(null);
+
+    fetchUserProfile(user.id)
+      .then((p) => {
+        if (isCancelled) return;
+        setProfile(p);
+      })
+      .catch((error) => {
+        if (isCancelled) return;
+        console.error("Failed to fetch user profile", error);
+        setProfile(null);
+        setProfileError("Unable to load user profile. Please retry in a moment.");
+      })
+      .finally(() => {
+        if (isCancelled) return;
+        setIsProfileLoading(false);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [user?.id]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -59,12 +89,15 @@ const Widget = () => {
         {state.error ? (
           <div className="text-sm text-red-400">{state.error}</div>
         ) : null}
-        {profile ? (
-          <MediaConfiguration state={state} user={profile?.user} />
-        ) : (
+        {profileError ? (
+          <div className="text-sm text-red-400">{profileError}</div>
+        ) : null}
+        {isProfileLoading ? (
           <div className="w-full h-full flex items-center">
             <Loader color="#fff" />
           </div>
+        ) : (
+          <MediaConfiguration state={state} user={profile?.user ?? null} />
         )}
       </SignedIn>
     </div>

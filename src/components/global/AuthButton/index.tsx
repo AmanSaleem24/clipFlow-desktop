@@ -1,8 +1,37 @@
 import { Button } from "@/components/ui/button"
-import { SignedOut, SignInButton, SignUpButton } from "@clerk/clerk-react"
+import { SignedOut, useSignIn } from "@clerk/clerk-react"
 import { ShieldCheck, Sparkles } from "lucide-react"
+import { useState } from "react"
 
 const AuthButton = () => {
+  const { isLoaded, signIn } = useSignIn()
+  const [isAuthenticating, setIsAuthenticating] = useState(false)
+
+  const handleGoogleSignIn = async () => {
+    if (!isLoaded || !signIn || isAuthenticating) return
+
+    try {
+      setIsAuthenticating(true)
+      const popup = window.open("about:blank", "clerk-google-sign-in", "width=520,height=680")
+      if (!popup) {
+        throw new Error("Unable to open Google sign-in popup. Please allow popups for this app.")
+      }
+
+      const redirectUrl = window.location.href
+      await signIn.authenticateWithPopup({
+        strategy: "oauth_google",
+        popup,
+        redirectUrl: redirectUrl,
+        redirectUrlComplete: redirectUrl,
+        continueSignUp: true,
+      })
+    } catch (error) {
+      console.error("Google sign-in failed", error)
+    } finally {
+      setIsAuthenticating(false)
+    }
+  }
+
   return (
     <SignedOut>
       <div className="px-4 pb-3">
@@ -25,16 +54,14 @@ const AuthButton = () => {
           </div>
 
           <div className="grid grid-cols-1 gap-2">
-            <SignInButton>
-              <Button variant="default" className="w-full py-2 text-sm">
-                Sign In
-              </Button>
-            </SignInButton>
-            <SignUpButton>
-              <Button variant="secondary" className="w-full text-white border border-white/20 bg-white/10 hover:bg-white/20 py-2 text-sm">
-                Create Account
-              </Button>
-            </SignUpButton>
+            <Button
+              variant="default"
+              className="w-full py-2 text-sm"
+              disabled={!isLoaded || isAuthenticating}
+              onClick={handleGoogleSignIn}
+            >
+              {isAuthenticating ? "Connecting..." : "Continue with Google"}
+            </Button>
           </div>
         </div>
       </div>

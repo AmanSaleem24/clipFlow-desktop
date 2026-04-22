@@ -1,9 +1,9 @@
 // @see - https://www.electron.build/configuration/configuration
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
-  "appId": "YourAppID",
+  "appId": "com.aman.clipflow",
   "asar": true,
-  "productName": "YourAppName",
+  "productName": "ClipFlow",
   "directories": {
     "output": "release/${version}"
   },
@@ -35,9 +35,10 @@
     "deleteAppDataOnUninstall": false
   },
   "linux": {
-    "target": [
-      "AppImage"
-    ],
-    "artifactName": "${productName}-Linux-${version}.${ext}"
-  }
+  "target": [
+    "deb"
+  ],
+  "artifactName": "${productName}-Linux-${version}.${ext}",
+  "category": "Utility"
+}
 }

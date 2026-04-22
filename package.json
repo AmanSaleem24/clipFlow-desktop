@@ -1,7 +1,11 @@
 {
   "name": "clipflow-desktop",
-  "private": true,
   "version": "0.0.0",
+  "description": "A clipboard management desktop app",
+  "author": {
+    "name": "Aman Saleem",
+    "email": "amancodez24@gmail.com"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",

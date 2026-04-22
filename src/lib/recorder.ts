@@ -6,8 +6,42 @@ import io from "socket.io-client"
 let videoTransferFileName: string | undefined;
 let mediaRecorder: MediaRecorder | undefined;
 let userId: string
+let pendingChunks: Blob[] = []
+let shouldProcessOnReconnect = false
 
-const socket = io(import.meta.env.VITE_SOCKET_URL as string)
+const socket = io(import.meta.env.VITE_SOCKET_URL as string, {
+  reconnection: true,
+  reconnectionAttempts: 10,
+  timeout: 15000,
+  autoConnect: true,
+})
+
+socket.on("connect", () => {
+  console.log("[recorder] socket connected", socket.id)
+  if (!videoTransferFileName) return
+
+  if (pendingChunks.length) {
+    for (const chunk of pendingChunks) {
+      socket.emit("video-chunks", {
+        chunks: chunk,
+        filename: videoTransferFileName,
+      })
+    }
+    pendingChunks = []
+  }
+
+  if (shouldProcessOnReconnect && userId) {
+    socket.emit("process-video", {
+      filename: videoTransferFileName,
+      userId,
+    })
+    shouldProcessOnReconnect = false
+  }
+})
+
+socket.on("connect_error", (error) => {
+  console.error("[recorder] socket connection error", error)
+})
 
 export const StartRecording = (onSources: {
   screen: string;
@@ -15,7 +49,10 @@ export const StartRecording = (onSources: {
   id: string;
 }) => {
   // hidePluginWindow(true)
-  videoTransferFileName = `${uuid()}-${onSources?.id.slice(0.8)}.webm`;
+  videoTransferFileName = `${uuid()}-${onSources?.id.slice(0, 8)}.webm`;
+  pendingChunks = []
+  shouldProcessOnReconnect = false
+  socket.connect()
   mediaRecorder?.start(1000);
 };
 
@@ -24,13 +61,39 @@ export const onStopRecording = () => mediaRecorder?.stop();
 export const stopRecording = () => {
     // finalize current recording and notify backend that no more chunks should arrive
     hidePluginWindow(false)
+    if (!videoTransferFileName || !userId) return
+
+    if (!socket.connected) {
+      shouldProcessOnReconnect = true
+      socket.connect()
+      return
+    }
+
+    if (pendingChunks.length) {
+      for (const chunk of pendingChunks) {
+        socket.emit("video-chunks", {
+          chunks: chunk,
+          filename: videoTransferFileName,
+        })
+      }
+      pendingChunks = []
+    }
+
     socket.emit('process-video', {
         filename: videoTransferFileName,
         userId
     })
+    shouldProcessOnReconnect = false
 }
 
 export const onDataAvailable = (e: BlobEvent) => {
+    if (!e.data || e.data.size === 0 || !videoTransferFileName) return
+
+    if (!socket.connected) {
+      pendingChunks.push(e.data)
+      return
+    }
+
     socket.emit('video-chunks', {
         chunks: e.data,
         filename: videoTransferFileName
