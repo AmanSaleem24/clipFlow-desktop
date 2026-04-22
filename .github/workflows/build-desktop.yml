@@ -1,0 +1,71 @@
+name: Build Desktop Installers
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: write
+
+env:
+  CI: true
+  VITE_CLERK_PUBLISHABLE_KEY: ${{ secrets.VITE_CLERK_PUBLISHABLE_KEY }}
+  VITE_SOCKET_URL: ${{ secrets.VITE_SOCKET_URL }}
+  VITE_HOST_URL: ${{ secrets.VITE_HOST_URL }}
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+            build_args: --linux deb
+          - name: Windows
+            os: windows-latest
+            build_args: --win nsis --x64
+          - name: macOS
+            os: macos-latest
+            build_args: --mac dmg
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build installer
+        shell: bash
+        run: npm run build -- --publish never ${{ matrix.build_args }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: clipflow-${{ matrix.name }}-artifacts
+          path: |
+            release/**/*
+          if-no-files-found: error
+
+      - name: Publish files to GitHub Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/**/*
